@@ -1,551 +1,262 @@
 """
 ui/main_window.py
-PSP 3000 Video Converter — Main Application Window (PyQt6)
+PSP 3000 Video Converter — Early-2000s Multimedia Player Skin (PyQt6)
+Aesthetic inspired by Windows Media Player 7/8/9, Winamp skins, and Xbox-era dark green/obsidian consoles.
 """
 
 import os
+import json
+import subprocess
 from pathlib import Path
 
-from PyQt6.QtCore import (Qt, QMimeData, QPropertyAnimation,
-                           QEasingCurve, QRect, QTimer, pyqtSlot)
-from PyQt6.QtGui import (QColor, QDragEnterEvent, QDropEvent, QFont,
-                          QFontDatabase, QIcon, QPainter, QPalette,
-                          QPixmap, QLinearGradient, QBrush)
+from PyQt6.QtCore import (Qt, QTimer, pyqtSlot)
+from PyQt6.QtGui import (QFont, QIcon)
 from PyQt6.QtWidgets import (QApplication, QComboBox, QFileDialog, QHBoxLayout,
-                              QLabel, QMainWindow, QProgressBar,
-                              QPushButton, QSizePolicy, QVBoxLayout,
-                              QWidget, QFrame, QGraphicsDropShadowEffect,
-                              QMessageBox, QGraphicsOpacityEffect)
+                               QLabel, QMainWindow, QPushButton, QSizePolicy,
+                               QVBoxLayout, QWidget, QFrame, QMessageBox)
 
 from converter import ConverterThread, CODEC_PRESETS
 from ffmpeg_manager import ffmpeg_path, ffprobe_path, is_ffmpeg_available, download_ffmpeg
+from ui.skin_widgets import (
+    RetroConsoleFrame, PhosphorLCDScreen, SegmentedLedMeter, SkeuomorphicButton,
+    RetroInsetPanel, CompactMediaTray, CLR_LIME_BRIGHT, CLR_LIME_MID, CLR_TEXT_MUTED
+)
 
 
-# ── Stylesheet ─────────────────────────────────────────────────────────────────
+# ── Stylesheet for Dropdowns, Dialogs, and Combos ─────────────────────────────
 STYLESHEET = """
 /* ── Global ─────────────────────────── */
 QWidget {
-    background-color: #0D0F14;
-    color: #E2E8F0;
-    font-family: 'Segoe UI', sans-serif;
-    font-size: 13px;
+    font-family: 'Segoe UI', Tahoma, Verdana, sans-serif;
+    font-size: 12px;
+    color: #CBE8D2;
 }
 
-/* ── Main window ─────────────────────── */
-QMainWindow {
-    background-color: #0D0F14;
+QComboBox {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #142A1A, stop:0.3 #0E2014, stop:0.8 #06140A, stop:1 #030A05);
+    border: 1px solid #1E3F28;
+    border-radius: 4px;
+    color: #00FF66;
+    padding: 5px 12px;
+    font-family: 'Lucida Console', 'Consolas', monospace;
+    font-size: 11px;
+    font-weight: bold;
+    min-width: 200px;
 }
-
-/* ── Drop zone card ──────────────────── */
-#dropZone {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-        stop:0 #131824, stop:1 #0E1520);
-    border: 2px dashed #2A3A5C;
-    border-radius: 18px;
-}
-#dropZone[dragActive="true"] {
-    border: 2px dashed #00D4FF;
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-        stop:0 #0E1B30, stop:1 #091528);
-}
-
-/* ── Labels ──────────────────────────── */
-#titleLabel {
+QComboBox:hover {
+    border-color: #00FF66;
     color: #FFFFFF;
-    font-size: 22px;
-    font-weight: 700;
-    letter-spacing: 0.5px;
 }
-#subtitleLabel {
-    color: #64748B;
-    font-size: 12px;
-}
-#dropHintLabel {
-    color: #94A3B8;
-    font-size: 15px;
-    font-weight: 500;
-}
-#dropSubLabel {
-    color: #475569;
-    font-size: 11px;
-}
-#fileNameLabel {
-    color: #00D4FF;
-    font-size: 13px;
-    font-weight: 600;
-}
-#statusLabel {
-    color: #94A3B8;
-    font-size: 12px;
-}
-#statusLabelDone {
-    color: #10B981;
-    font-size: 12px;
-    font-weight: 600;
-}
-#statusLabelError {
-    color: #F87171;
-    font-size: 12px;
-    font-weight: 600;
-}
-
-/* ── Spec badge ──────────────────────── */
-#specCard {
-    background: #131824;
-    border: 1px solid #1E2D45;
-    border-radius: 10px;
-}
-#specTitle {
-    color: #475569;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 1px;
-}
-#specValue {
-    color: #CBD5E1;
-    font-size: 11px;
-    font-weight: 600;
-}
-
-/* ── Progress bar ────────────────────── */
-QProgressBar {
-    background-color: #1E2D45;
-    border: none;
-    border-radius: 5px;
-    height: 8px;
-    text-align: center;
-    color: transparent;
-}
-QProgressBar::chunk {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 #00D4FF, stop:1 #A855F7);
-    border-radius: 5px;
-}
-
-/* ── Codec selector ─────────────────── */
-QComboBox#codecSelector {
-    background: #131824;
-    border: 1px solid #2A3A5C;
-    border-radius: 8px;
-    color: #CBD5E1;
-    padding: 6px 12px;
-    font-size: 12px;
-    min-width: 180px;
-}
-QComboBox#codecSelector:hover {
-    border-color: #00D4FF;
-}
-QComboBox#codecSelector::drop-down {
+QComboBox::drop-down {
     border: none;
     padding-right: 8px;
 }
 QComboBox QAbstractItemView {
-    background: #131824;
-    border: 1px solid #2A3A5C;
-    color: #CBD5E1;
-    selection-background-color: #1E2D45;
+    background: #06140A;
+    border: 1px solid #00FF66;
+    color: #00FF66;
+    selection-background-color: #006629;
+    selection-color: #FFFFFF;
 }
 
-/* ── Buttons ─────────────────────────── */
-#browseBtn {
-    background: transparent;
-    border: 1px solid #2A3A5C;
-    border-radius: 8px;
-    color: #94A3B8;
-    padding: 7px 18px;
-    font-size: 12px;
-}
-#browseBtn:hover {
-    border-color: #00D4FF;
-    color: #00D4FF;
-    background: rgba(0, 212, 255, 0.06);
-}
-#convertBtn {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 #0099CC, stop:1 #7C3AED);
-    border: none;
-    border-radius: 10px;
-    color: #FFFFFF;
-    font-size: 14px;
-    font-weight: 700;
-    padding: 12px 32px;
-    letter-spacing: 0.3px;
-}
-#convertBtn:hover {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 #00B8E6, stop:1 #9333EA);
-}
-#convertBtn:disabled {
-    background: #1E2D45;
-    color: #475569;
-}
-#cancelBtn {
-    background: transparent;
-    border: 1px solid #7F1D1D;
-    border-radius: 8px;
-    color: #F87171;
-    padding: 7px 18px;
-    font-size: 12px;
-}
-#cancelBtn:hover {
-    background: rgba(248, 113, 113, 0.08);
-}
-#openFolderBtn {
-    background: rgba(16, 185, 129, 0.12);
-    border: 1px solid #059669;
-    border-radius: 8px;
-    color: #10B981;
-    padding: 7px 18px;
-    font-size: 12px;
-    font-weight: 600;
-}
-#openFolderBtn:hover {
-    background: rgba(16, 185, 129, 0.2);
-}
-#downloadFfmpegBtn {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 #D97706, stop:1 #B45309);
-    border: none;
-    border-radius: 10px;
-    color: #FFFFFF;
-    font-size: 13px;
-    font-weight: 700;
-    padding: 11px 28px;
-}
-#downloadFfmpegBtn:hover {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 #F59E0B, stop:1 #D97706);
-}
-
-/* ── Divider line ────────────────────── */
-QFrame#divider {
-    color: #1E2D45;
-    background: #1E2D45;
-    max-height: 1px;
+QMessageBox {
+    background-color: #06140A;
+    color: #CBE8D2;
 }
 """
 
 
-# ── Spec Panel widget ──────────────────────────────────────────────────────────
-class SpecBadge(QWidget):
-    """A small two-line spec badge: label on top, value below."""
-
-    def __init__(self, label: str, value: str, parent=None):
-        super().__init__(parent)
-        self.setObjectName("specCard")
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(2)
-
-        lbl = QLabel(label.upper())
-        lbl.setObjectName("specTitle")
-        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        val = QLabel(value)
-        val.setObjectName("specValue")
-        val.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        layout.addWidget(lbl)
-        layout.addWidget(val)
-
-
-# ── Drop Zone widget ───────────────────────────────────────────────────────────
-class DropZone(QWidget):
-    """A drag-and-drop target that emits file_dropped when a video is dropped."""
-
-    from PyQt6.QtCore import pyqtSignal as _sig
-    file_dropped = _sig(str)
-
-    SUPPORTED = {".mp4", ".mkv", ".avi", ".mov", ".wmv",
-                 ".flv", ".webm", ".m4v", ".3gp", ".ts", ".m2ts"}
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("dropZone")
-        self.setAcceptDrops(True)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding,
-                           QSizePolicy.Policy.Expanding)
-        self._build_ui()
-
-    def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.setSpacing(8)
-
-        # Icon (unicode PSP controller emoji as fallback)
-        self.iconLabel = QLabel("🎮")
-        self.iconLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.iconLabel.setStyleSheet("font-size: 48px; background: transparent;")
-
-        self.hintLabel = QLabel("Drop your video here")
-        self.hintLabel.setObjectName("dropHintLabel")
-        self.hintLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.subLabel = QLabel("or click Browse to select a file")
-        self.subLabel.setObjectName("dropSubLabel")
-        self.subLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.fileLabel = QLabel("")
-        self.fileLabel.setObjectName("fileNameLabel")
-        self.fileLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.fileLabel.setWordWrap(True)
-        self.fileLabel.hide()
-
-        layout.addWidget(self.iconLabel)
-        layout.addWidget(self.hintLabel)
-        layout.addWidget(self.subLabel)
-        layout.addWidget(self.fileLabel)
-
-    def set_file(self, path: str):
-        name = Path(path).name
-        self.fileLabel.setText(f"📄  {name}")
-        self.fileLabel.show()
-        self.hintLabel.setText("File selected — ready to convert")
-        self.subLabel.setText("Drop another file to replace")
-
-    def reset(self):
-        self.fileLabel.hide()
-        self.hintLabel.setText("Drop your video here")
-        self.subLabel.setText("or click Browse to select a file")
-
-    # ── Drag events ────────────────────────────────────────────────────────────
-    def dragEnterEvent(self, event: QDragEnterEvent):
-        if event.mimeData().hasUrls():
-            urls = event.mimeData().urls()
-            if urls and Path(urls[0].toLocalFile()).suffix.lower() in self.SUPPORTED:
-                self.setProperty("dragActive", "true")
-                self.style().polish(self)
-                event.acceptProposedAction()
-                return
-        event.ignore()
-
-    def dragLeaveEvent(self, event):
-        self.setProperty("dragActive", "false")
-        self.style().polish(self)
-
-    def dropEvent(self, event: QDropEvent):
-        self.setProperty("dragActive", "false")
-        self.style().polish(self)
-        urls = event.mimeData().urls()
-        if urls:
-            path = urls[0].toLocalFile()
-            if Path(path).suffix.lower() in self.SUPPORTED:
-                self.file_dropped.emit(path)
-                event.acceptProposedAction()
-
-
-# ── Main Window ────────────────────────────────────────────────────────────────
+# ── Main Application Window ───────────────────────────────────────────────────
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("PSP 3000 Video Converter")
+        self.setWindowTitle("PSP Video Converter // Digital Media Console")
         self.setFixedSize(860, 680)
         self.setAcceptDrops(True)
 
-        self._input_path  = ""
+        self._input_path = ""
         self._output_path = ""
-        self._converter   = None
+        self._converter = None
 
         self._build_ui()
         self._check_ffmpeg_on_startup()
 
-    # ── UI construction ────────────────────────────────────────────────────────
-
     def _build_ui(self):
-        central = QWidget()
-        self.setCentralWidget(central)
-        root = QVBoxLayout(central)
-        root.setContentsMargins(28, 24, 28, 24)
-        root.setSpacing(16)
+        # 1. Main Console Chassis
+        self.console = RetroConsoleFrame()
+        self.setCentralWidget(self.console)
 
-        # --- Header ---
+        main_layout = QVBoxLayout(self.console)
+        main_layout.setContentsMargins(20, 16, 20, 16)
+        main_layout.setSpacing(10)
+
+        # ── Header Console Identity ───────────────────────────────────────────
         header = QHBoxLayout()
-        titleCol = QVBoxLayout()
-        titleCol.setSpacing(2)
+        header.setSpacing(10)
 
-        title = QLabel("PSP 3000  Video Converter")
-        title.setObjectName("titleLabel")
+        title_col = QVBoxLayout()
+        title_col.setSpacing(1)
 
-        sub = QLabel("Convert any video to Sony PSP 3000 native format · 480 × 272 · H.264 · AAC")
-        sub.setObjectName("subtitleLabel")
+        app_title = QLabel("PSP TRANSCODER  //  DIGITAL MEDIA CONSOLE")
+        app_title.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        app_title.setStyleSheet("color: #00FF66; letter-spacing: 1.5px;")
 
-        titleCol.addWidget(title)
-        titleCol.addWidget(sub)
+        app_sub = QLabel("MPEG-4 AVC / AAC-LC ENCODE ENGINE · PSP-3000 HARDWARE NATIVE")
+        app_sub.setFont(QFont("Lucida Console", 8, QFont.Weight.Bold))
+        app_sub.setStyleSheet("color: #4A7A58; letter-spacing: 0.5px;")
 
-        header.addLayout(titleCol)
+        title_col.addWidget(app_title)
+        title_col.addWidget(app_sub)
+        header.addLayout(title_col)
         header.addStretch()
 
-        # Browse button
-        self.browseBtn = QPushButton("📂  Browse")
-        self.browseBtn.setObjectName("browseBtn")
-        self.browseBtn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.browseBtn.clicked.connect(self._browse_file)
-        header.addWidget(self.browseBtn)
+        # Hardware Status LED Matrix
+        led_row = QHBoxLayout()
+        led_row.setSpacing(12)
 
-        root.addLayout(header)
+        def make_hardware_led(label_text: str, is_on: bool = True):
+            w = QWidget()
+            l = QHBoxLayout(w)
+            l.setContentsMargins(4, 2, 4, 2)
+            l.setSpacing(5)
+            led = QLabel("●")
+            led.setStyleSheet(f"color: {'#00FF66' if is_on else '#004D1F'}; font-size: 11px;")
+            txt = QLabel(label_text)
+            txt.setFont(QFont("Lucida Console", 8, QFont.Weight.Bold))
+            txt.setStyleSheet("color: #6A9E78;")
+            l.addWidget(led)
+            l.addWidget(txt)
+            return w
 
-        # --- Drop Zone ---
-        self.dropZone = DropZone()
-        self.dropZone.file_dropped.connect(self._on_file_selected)
-        self.dropZone.setMinimumHeight(200)
+        led_row.addWidget(make_hardware_led("CORE: ONLINE"))
+        led_row.addWidget(make_hardware_led("DSP: READY"))
+        led_row.addWidget(make_hardware_led("480x272"))
 
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(30)
-        shadow.setOffset(0, 4)
-        shadow.setColor(QColor(0, 212, 255, 40))
-        self.dropZone.setGraphicsEffect(shadow)
+        header.addLayout(led_row)
+        main_layout.addLayout(header)
 
-        root.addWidget(self.dropZone)
+        # ── Central Phosphor LCD Screen ───────────────────────────────────────
+        self.lcd = PhosphorLCDScreen()
+        self.lcd.set_idle()
+        main_layout.addWidget(self.lcd)
 
-        # --- Spec row ---
-        specRow = QHBoxLayout()
-        specRow.setSpacing(8)
-        specs = [
-            ("Resolution", "480 × 272"),
-            ("Codec", "H.264"),
-            ("Profile", "Baseline 3.0"),
-            ("Video", "768 kbps"),
-            ("Audio", "AAC 128k"),
-            ("FPS", "29.97"),
-            ("Container", ".mp4"),
-        ]
-        for label, value in specs:
-            badge = SpecBadge(label, value)
-            specRow.addWidget(badge)
-        root.addLayout(specRow)
+        # ── Compact Media Tray / Drop Zone ────────────────────────────────────
+        self.dropTray = CompactMediaTray()
+        self.dropTray.file_dropped.connect(self._on_file_selected)
+        main_layout.addWidget(self.dropTray)
 
-        # --- Divider ---
-        divider = QFrame()
-        divider.setObjectName("divider")
-        divider.setFrameShape(QFrame.Shape.HLine)
-        root.addWidget(divider)
+        # ── Segmented LED Progress Meter ──────────────────────────────────────
+        self.meterRow = QHBoxLayout()
+        self.meterRow.setSpacing(10)
 
-        # --- Codec selector row ---
-        codecRow = QHBoxLayout()
-        codecLabel = QLabel("Codec:")
-        codecLabel.setObjectName("subtitleLabel")
-        codecLabel.setFixedWidth(54)
+        self.progressBar = SegmentedLedMeter()
+        self.meterRow.addWidget(self.progressBar)
+
+        self.progressPctLabel = QLabel("00%")
+        self.progressPctLabel.setFont(QFont("Lucida Console", 10, QFont.Weight.Bold))
+        self.progressPctLabel.setStyleSheet("color: #00FF66; min-width: 44px;")
+        self.meterRow.addWidget(self.progressPctLabel)
+
+        main_layout.addLayout(self.meterRow)
+
+        # ── Hardware Parameters & Destination Panel ───────────────────────────
+        self.paramsPanel = RetroInsetPanel("TRANSCODE HARDWARE PARAMETERS")
+        params_layout = QHBoxLayout(self.paramsPanel)
+        params_layout.setContentsMargins(10, 8, 10, 8)
+        params_layout.setSpacing(14)
+
+        # Profile Selector
+        preset_box = QHBoxLayout()
+        preset_box.setSpacing(6)
+        preset_lbl = QLabel("PROFILE:")
+        preset_lbl.setFont(QFont("Lucida Console", 8, QFont.Weight.Bold))
+        preset_lbl.setStyleSheet("color: #4A7A58;")
 
         self.codecSelector = QComboBox()
-        self.codecSelector.setObjectName("codecSelector")
-        self.codecSelector.setCursor(Qt.CursorShape.PointingHandCursor)
         for name in CODEC_PRESETS:
             self.codecSelector.addItem(name)
+        preset_box.addWidget(preset_lbl)
+        preset_box.addWidget(self.codecSelector)
+        params_layout.addLayout(preset_box)
 
-        codecHint = QLabel("Try MPEG-4 if H.264 shows 'Unsupported Data' on PSP")
-        codecHint.setObjectName("subtitleLabel")
+        # Output Destination
+        out_box = QHBoxLayout()
+        out_box.setSpacing(6)
+        out_lbl = QLabel("DESTINATION:")
+        out_lbl.setFont(QFont("Lucida Console", 8, QFont.Weight.Bold))
+        out_lbl.setStyleSheet("color: #4A7A58;")
 
-        codecRow.addWidget(codecLabel)
-        codecRow.addWidget(self.codecSelector)
-        codecRow.addSpacing(12)
-        codecRow.addWidget(codecHint)
-        codecRow.addStretch()
-        root.addLayout(codecRow)
+        self.outputPathLabel = QLabel("SAME AS SOURCE")
+        self.outputPathLabel.setFont(QFont("Lucida Console", 8))
+        self.outputPathLabel.setStyleSheet("color: #00FF66; background: #040C06; padding: 4px 8px; border: 1px inset #142A1A; border-radius: 3px;")
+        self.outputPathLabel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
-        # --- Output path row ---
-        outputRow = QHBoxLayout()
-        outputLabel = QLabel("Save to:")
-        outputLabel.setObjectName("subtitleLabel")
-        outputLabel.setFixedWidth(54)
-
-        self.outputPathLabel = QLabel("Same folder as input file")
-        self.outputPathLabel.setObjectName("subtitleLabel")
-        self.outputPathLabel.setSizePolicy(QSizePolicy.Policy.Expanding,
-                                           QSizePolicy.Policy.Preferred)
-
-        self.changeOutputBtn = QPushButton("Change")
-        self.changeOutputBtn.setObjectName("browseBtn")
-        self.changeOutputBtn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.changeOutputBtn = SkeuomorphicButton("CHANGE...")
         self.changeOutputBtn.clicked.connect(self._choose_output_folder)
 
-        outputRow.addWidget(outputLabel)
-        outputRow.addWidget(self.outputPathLabel)
-        outputRow.addWidget(self.changeOutputBtn)
-        root.addLayout(outputRow)
+        out_box.addWidget(out_lbl)
+        out_box.addWidget(self.outputPathLabel)
+        out_box.addWidget(self.changeOutputBtn)
+        params_layout.addLayout(out_box)
 
-        # --- Progress bar ---
-        self.progressBar = QProgressBar()
-        self.progressBar.setRange(0, 100)
-        self.progressBar.setValue(0)
-        self.progressBar.setFixedHeight(8)
-        self.progressBar.hide()
-        root.addWidget(self.progressBar)
+        main_layout.addWidget(self.paramsPanel)
 
-        # --- Status label ---
-        self.statusLabel = QLabel("")
-        self.statusLabel.setObjectName("statusLabel")
-        self.statusLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.statusLabel.hide()
-        root.addWidget(self.statusLabel)
+        # ── Primary Control Buttons / Action Bar ──────────────────────────────
+        actionBar = QHBoxLayout()
+        actionBar.setSpacing(10)
 
-        # --- Diagnostic label (ffprobe PSP-3000 compliance table) ---
-        self.diagLabel = QLabel("")
-        self.diagLabel.setObjectName("subtitleLabel")
-        self.diagLabel.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        self.diagLabel.setTextFormat(Qt.TextFormat.RichText)
-        self.diagLabel.setWordWrap(True)
-        self.diagLabel.hide()
-        root.addWidget(self.diagLabel)
+        # Browse / Select Media
+        self.browseBtn = SkeuomorphicButton("⏏  SELECT VIDEO FILE")
+        self.browseBtn.setFixedWidth(180)
+        self.browseBtn.clicked.connect(self._browse_file)
+        actionBar.addWidget(self.browseBtn)
 
-        # --- Bottom action row ---
-        actionRow = QHBoxLayout()
-        actionRow.setSpacing(10)
-
-        self.openFolderBtn = QPushButton("📁  Open Output Folder")
-        self.openFolderBtn.setObjectName("openFolderBtn")
-        self.openFolderBtn.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Open Output Folder Button
+        self.openFolderBtn = SkeuomorphicButton("📁  OPEN OUTPUT FOLDER")
+        self.openFolderBtn.setFixedWidth(190)
         self.openFolderBtn.clicked.connect(self._open_output_folder)
         self.openFolderBtn.hide()
+        actionBar.addWidget(self.openFolderBtn)
 
-        self.cancelBtn = QPushButton("✕  Cancel")
-        self.cancelBtn.setObjectName("cancelBtn")
-        self.cancelBtn.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Cancel Button
+        self.cancelBtn = SkeuomorphicButton("⏹  STOP / CANCEL")
+        self.cancelBtn.setFixedWidth(140)
         self.cancelBtn.clicked.connect(self._cancel_conversion)
         self.cancelBtn.hide()
+        actionBar.addWidget(self.cancelBtn)
 
-        actionRow.addWidget(self.openFolderBtn)
-        actionRow.addStretch()
-        actionRow.addWidget(self.cancelBtn)
+        actionBar.addStretch()
 
-        self.convertBtn = QPushButton("▶  Convert to PSP Format")
-        self.convertBtn.setObjectName("convertBtn")
-        self.convertBtn.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Primary Hero Button: CONVERT TO PSP
+        self.convertBtn = SkeuomorphicButton("▶  CONVERT TO PSP", is_hero=True)
+        self.convertBtn.setFixedWidth(240)
         self.convertBtn.setEnabled(False)
-        self.convertBtn.setFixedHeight(46)
         self.convertBtn.clicked.connect(self._start_conversion)
+        actionBar.addWidget(self.convertBtn)
 
-        root.addLayout(actionRow)
-        root.addWidget(self.convertBtn)
+        main_layout.addLayout(actionBar)
 
-        # --- FFmpeg warning panel (shown if FFmpeg missing) ---
-        self.ffmpegPanel = QWidget()
+        # ── Missing FFmpeg Panel ──────────────────────────────────────────────
+        self.ffmpegPanel = RetroInsetPanel("ENGINE INITIALIZATION")
         ffmpegLayout = QVBoxLayout(self.ffmpegPanel)
-        ffmpegLayout.setContentsMargins(0, 0, 0, 0)
-        ffmpegLayout.setSpacing(8)
+        ffmpegLayout.setContentsMargins(10, 10, 10, 10)
+        ffmpegLayout.setSpacing(6)
 
-        ffmpegWarn = QLabel("⚠️  FFmpeg not found — required for video conversion")
-        ffmpegWarn.setObjectName("statusLabelError")
+        ffmpegWarn = QLabel("⚠️  Portable FFmpeg transcode engine not detected.")
+        ffmpegWarn.setFont(QFont("Lucida Console", 9, QFont.Weight.Bold))
+        ffmpegWarn.setStyleSheet("color: #FFB000;")
         ffmpegWarn.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        ffmpegSub = QLabel("Click below to download the FFmpeg engine automatically (≈ 40 MB).")
-        ffmpegSub.setObjectName("subtitleLabel")
-        ffmpegSub.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.downloadFfmpegBtn = QPushButton("⬇  Download FFmpeg (required)")
-        self.downloadFfmpegBtn.setObjectName("downloadFfmpegBtn")
-        self.downloadFfmpegBtn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.downloadFfmpegBtn.setFixedHeight(44)
+        self.downloadFfmpegBtn = SkeuomorphicButton("⬇  DOWNLOAD PORTABLE ENCODE ENGINE (AUTOMATIC)", is_hero=True)
         self.downloadFfmpegBtn.clicked.connect(self._download_ffmpeg)
 
         ffmpegLayout.addWidget(ffmpegWarn)
-        ffmpegLayout.addWidget(ffmpegSub)
         ffmpegLayout.addWidget(self.downloadFfmpegBtn)
-
         self.ffmpegPanel.hide()
-        root.addWidget(self.ffmpegPanel)
+        main_layout.addWidget(self.ffmpegPanel)
 
-    # ── FFmpeg ─────────────────────────────────────────────────────────────────
-
+    # ── FFmpeg Detection & Download ────────────────────────────────────────────
     def _check_ffmpeg_on_startup(self):
         if not is_ffmpeg_available():
             self.convertBtn.hide()
@@ -553,34 +264,27 @@ class MainWindow(QMainWindow):
 
     def _download_ffmpeg(self):
         self.downloadFfmpegBtn.setEnabled(False)
-        self.downloadFfmpegBtn.setText("⬇  Downloading FFmpeg…")
-        self.progressBar.setRange(0, 100)
-        self.progressBar.setValue(0)
-        self.progressBar.show()
-        self.statusLabel.setObjectName("statusLabel")
-        self.statusLabel.setText("Downloading FFmpeg engine…")
-        self.statusLabel.show()
+        self.downloadFfmpegBtn.setText("⬇  DOWNLOADING ENGINE...")
+        self.lcd.set_converting(0, "DOWNLOADING PORTABLE FFMPEG ENCODE ENGINE...")
 
         def _progress(pct):
             self.progressBar.setValue(pct)
+            self.progressPctLabel.setText(f"{pct:02d}%")
 
         def _done():
-            self.progressBar.hide()
             self.ffmpegPanel.hide()
             self.convertBtn.show()
-            self.statusLabel.setObjectName("statusLabelDone")
-            self.statusLabel.setText("✅  FFmpeg downloaded successfully! Ready to convert.")
-            self.statusLabel.show()
-            self.style().polish(self.statusLabel)
+            self.progressBar.setValue(0)
+            self.progressPctLabel.setText("00%")
+            if self._input_path:
+                self._on_file_selected(self._input_path)
+            else:
+                self.lcd.set_idle()
 
         def _error(msg):
-            self.progressBar.hide()
             self.downloadFfmpegBtn.setEnabled(True)
-            self.downloadFfmpegBtn.setText("⬇  Download FFmpeg (required)")
-            self.statusLabel.setObjectName("statusLabelError")
-            self.statusLabel.setText(f"❌  Download failed: {msg}")
-            self.statusLabel.show()
-            self.style().polish(self.statusLabel)
+            self.downloadFfmpegBtn.setText("⬇  RETRY ENGINE DOWNLOAD")
+            self.lcd.set_error(f"Download error: {msg}")
 
         download_ffmpeg(
             progress_callback=lambda p: QTimer.singleShot(0, lambda: _progress(p)),
@@ -588,8 +292,7 @@ class MainWindow(QMainWindow):
             error_callback=lambda m: QTimer.singleShot(0, lambda: _error(m)),
         )
 
-    # ── File selection ─────────────────────────────────────────────────────────
-
+    # ── File Selection & Stream Metadata Inspection ────────────────────────────
     def _browse_file(self):
         path, _ = QFileDialog.getOpenFileName(
             self,
@@ -603,51 +306,93 @@ class MainWindow(QMainWindow):
     @pyqtSlot(str)
     def _on_file_selected(self, path: str):
         self._input_path = path
-        self.dropZone.set_file(path)
+        self.dropTray.set_file(path)
         self.convertBtn.setEnabled(True)
-        self._reset_status()
+        self.openFolderBtn.hide()
+        self.cancelBtn.hide()
+        self.progressBar.setValue(0)
+        self.progressPctLabel.setText("00%")
 
-        # Default output: same folder as input, with _PSP suffix
+        # Default output file
         in_p = Path(path)
         default_out = in_p.parent / f"{in_p.stem}_PSP.mp4"
         self._output_path = str(default_out)
         self.outputPathLabel.setText(str(in_p.parent))
 
+        # Inspect and populate LCD
+        self._inspect_and_update_lcd(path)
+
+    def _inspect_and_update_lcd(self, path: str):
+        """Extract stream properties via ffprobe and display in phosphor LCD."""
+        file_name = Path(path).name
+        video_info = "UNKNOWN CODEC"
+        audio_info = "UNKNOWN AUDIO"
+        dur_info = "00:00"
+        size_info = f"{Path(path).stat().st_size / (1024*1024):.1f} MB"
+
+        probe = ffprobe_path()
+        if probe:
+            try:
+                res = subprocess.run(
+                    [probe, "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", path],
+                    capture_output=True, text=True, timeout=8, creationflags=subprocess.CREATE_NO_WINDOW
+                )
+                data = json.loads(res.stdout)
+                v = next((s for s in data.get("streams", []) if s.get("codec_type") == "video"), {})
+                a = next((s for s in data.get("streams", []) if s.get("codec_type") == "audio"), {})
+
+                if v:
+                    v_codec = v.get("codec_name", "AVC").upper()
+                    w, h = v.get("width", 0), v.get("height", 0)
+                    sar = v.get("sample_aspect_ratio", "")
+                    sar_txt = f" [SAR {sar}]" if sar and sar != "1:1" else ""
+                    video_info = f"{v_codec} · {w}x{h}{sar_txt}"
+
+                if a:
+                    a_codec = a.get("codec_name", "AAC").upper()
+                    a_rate = a.get("sample_rate", "48000")
+                    a_ch = a.get("channels", 2)
+                    audio_info = f"{a_codec} · {a_rate}Hz · {a_ch}CH"
+
+                dur = float(data.get("format", {}).get("duration", 0))
+                if dur > 0:
+                    mins, secs = int(dur // 60), int(dur % 60)
+                    dur_info = f"{mins:02d}:{secs:02d}"
+            except Exception:
+                pass
+
+        self.lcd.set_file_info(file_name, video_info, audio_info, dur_info, size_info)
+
     def _choose_output_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Choose Output Folder")
+        folder = QFileDialog.getExistingDirectory(self, "Choose Destination Folder")
         if folder and self._input_path:
             in_p = Path(self._input_path)
             self._output_path = str(Path(folder) / f"{in_p.stem}_PSP.mp4")
             self.outputPathLabel.setText(folder)
 
-    # ── Conversion ─────────────────────────────────────────────────────────────
-
+    # ── Transcode Operations ───────────────────────────────────────────────────
     def _start_conversion(self):
         if not self._input_path:
             return
 
         ffmpeg = ffmpeg_path()
         if not ffmpeg:
-            QMessageBox.warning(self, "FFmpeg Missing",
-                                "FFmpeg is not available. Please download it first.")
+            QMessageBox.warning(self, "Engine Missing", "FFmpeg executable not available.")
             return
 
         self.convertBtn.setEnabled(False)
         self.browseBtn.setEnabled(False)
         self.changeOutputBtn.setEnabled(False)
-        self.progressBar.setValue(0)
-        self.progressBar.show()
-        self.cancelBtn.show()
         self.openFolderBtn.hide()
-        self.statusLabel.setObjectName("statusLabel")
-        self.statusLabel.setText("Starting conversion…")
-        self.statusLabel.show()
-        self.style().polish(self.statusLabel)
+        self.cancelBtn.show()
+        self.progressBar.setValue(0)
+        self.progressPctLabel.setText("00%")
 
         selected_preset = self.codecSelector.currentText()
         flags = CODEC_PRESETS.get(selected_preset)
         self._converter = ConverterThread(ffmpeg, self._input_path, self._output_path, flags=flags)
-        self._converter.progress.connect(self.progressBar.setValue)
+
+        self._converter.progress.connect(self._on_progress)
         self._converter.status.connect(self._on_status)
         self._converter.finished.connect(self._on_finished)
         self._converter.error.connect(self._on_error)
@@ -658,129 +403,52 @@ class MainWindow(QMainWindow):
             self._converter.abort()
         self._reset_to_idle()
 
-    # ── Slots ──────────────────────────────────────────────────────────────────
+    @pyqtSlot(int)
+    def _on_progress(self, pct: int):
+        self.progressBar.setValue(pct)
+        self.progressPctLabel.setText(f"{pct:02d}%")
 
     @pyqtSlot(str)
     def _on_status(self, msg: str):
-        self.statusLabel.setText(msg)
+        self.lcd.set_converting(self.progressBar.value(), msg)
 
     @pyqtSlot(str)
     def _on_finished(self, output_path: str):
         self.progressBar.setValue(100)
+        self.progressPctLabel.setText("100%")
         self.cancelBtn.hide()
         self.openFolderBtn.show()
         self.convertBtn.setEnabled(True)
         self.browseBtn.setEnabled(True)
         self.changeOutputBtn.setEnabled(True)
-        self.statusLabel.setObjectName("statusLabelDone")
-        self.statusLabel.setText(
-            f"✅  Conversion complete!  →  {Path(output_path).name}"
-        )
-        self.style().polish(self.statusLabel)
+
         self._output_path = output_path
-        # Run ffprobe to confirm container brand and show diagnostic
-        self._run_ffprobe_check(output_path)
+        self.lcd.set_done(output_path)
 
     @pyqtSlot(str)
     def _on_error(self, msg: str):
-        self.progressBar.hide()
         self.cancelBtn.hide()
         self.convertBtn.setEnabled(True)
         self.browseBtn.setEnabled(True)
         self.changeOutputBtn.setEnabled(True)
-        self.statusLabel.setObjectName("statusLabelError")
-        self.statusLabel.setText(f"❌  {msg}")
-        self.style().polish(self.statusLabel)
+        self.lcd.set_error(msg)
 
     def _open_output_folder(self):
         folder = str(Path(self._output_path).parent)
         os.startfile(folder)
 
-    def _run_ffprobe_check(self, output_path: str):
-        """Run ffprobe and show full PSP-3000 compliance report."""
-        import subprocess
-        from psp_validator import validate
-        probe = ffprobe_path()
-        if not probe:
-            self.diagLabel.setText(
-                "⚠️  ffprobe not found — cannot validate output. "
-                "Re-download FFmpeg to get ffprobe."
-            )
-            self.diagLabel.show()
-            return
-
-        try:
-            report = validate(probe, output_path)
-        except Exception as exc:
-            self.diagLabel.setText(f"⚠️  Validation error: {exc}")
-            self.diagLabel.show()
-            return
-
-        if report.ffprobe_error:
-            self.diagLabel.setText(f"⚠️  ffprobe error: {report.ffprobe_error}")
-            self.diagLabel.show()
-            return
-
-        # Build HTML table of results
-        rows = []
-        for c in report.checks:
-            icon  = "✅" if c.passed else "❌"
-            color = "#10B981" if c.passed else "#F87171"
-            note  = f"<br><span style='color:#64748B;font-size:10px'>{c.note}</span>" if c.note else ""
-            rows.append(
-                f"<tr>"
-                f"<td style='padding:2px 8px'>{icon}</td>"
-                f"<td style='padding:2px 8px;color:#CBD5E1'>{c.name}</td>"
-                f"<td style='padding:2px 8px;color:{color};font-weight:600'>{c.actual}</td>"
-                f"<td style='padding:2px 8px;color:#475569'>{c.expected}{note}</td>"
-                f"</tr>"
-            )
-
-        table = (
-            "<table style='border-collapse:collapse;width:100%'>"
-            "<tr style='color:#475569;font-size:10px'>"
-            "<th></th><th align='left' style='padding:2px 8px'>Check</th>"
-            "<th align='left' style='padding:2px 8px'>Actual</th>"
-            "<th align='left' style='padding:2px 8px'>Expected</th>"
-            "</tr>"
-            + "".join(rows)
-            + "</table>"
-        )
-
-        self.diagLabel.setText(table)
-        self.diagLabel.show()
-
-        # Update status line to reflect validation outcome
-        if not report.all_passed:
-            n = report.fail_count
-            self.statusLabel.setObjectName("statusLabelError")
-            self.statusLabel.setText(
-                f"⚠️  Conversion done but {n} PSP-3000 compatibility "
-                f"check{'s' if n != 1 else ''} failed — file may not play on PSP hardware."
-            )
-            self.style().polish(self.statusLabel)
-
-    # ── Helpers ────────────────────────────────────────────────────────────────
-
-    def _reset_status(self):
-        self.statusLabel.hide()
-        self.progressBar.hide()
-        self.openFolderBtn.hide()
-        self.cancelBtn.hide()
-        self.diagLabel.hide()
-
     def _reset_to_idle(self):
-        self.progressBar.hide()
         self.cancelBtn.hide()
         self.convertBtn.setEnabled(bool(self._input_path))
         self.browseBtn.setEnabled(True)
         self.changeOutputBtn.setEnabled(True)
-        self.statusLabel.setObjectName("statusLabel")
-        self.statusLabel.setText("Conversion cancelled.")
-        self.statusLabel.show()
-        self.style().polish(self.statusLabel)
+        self.progressBar.setValue(0)
+        self.progressPctLabel.setText("00%")
+        if self._input_path:
+            self._inspect_and_update_lcd(self._input_path)
+        else:
+            self.lcd.set_idle()
 
 
 def apply_stylesheet(app: QApplication):
     app.setStyleSheet(STYLESHEET)
-
