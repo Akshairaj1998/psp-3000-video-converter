@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.spec
+
+# Build & Dist
+build/
+dist/
+*.exe
+
+# Binaries & Downloads
+ffmpeg_bin/
+*.zip
+
+# Media & Test files
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.wmv
+*.flv
+*.webm
+*.ts
+
+# Logs & temp
+*.log
+startup_errors.txt
+.vscode/
+.idea/
