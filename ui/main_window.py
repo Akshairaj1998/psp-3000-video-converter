@@ -1,7 +1,8 @@
 """
 ui/main_window.py
-PSP 3000 Video Converter — Early-2000s Multimedia Player Skin (PyQt6)
-Aesthetic inspired by Windows Media Player 7/8/9, Winamp skins, and Xbox-era dark green/obsidian consoles.
+PSP 3000 Video Converter — Windows Media Player 9 Series ("Corona") Skinned Console (PyQt6)
+Authentic 2003 WMP9 multimedia player skin aesthetic with custom window chrome,
+phosphor LCD viewport, transport controls, and dense media telemetry.
 """
 
 import os
@@ -9,40 +10,40 @@ import json
 import subprocess
 from pathlib import Path
 
-from PyQt6.QtCore import (Qt, QTimer, pyqtSlot)
-from PyQt6.QtGui import (QFont, QIcon)
+from PyQt6.QtCore import (Qt, QPoint, QTimer, pyqtSlot)
+from PyQt6.QtGui import (QFont, QMouseEvent)
 from PyQt6.QtWidgets import (QApplication, QComboBox, QFileDialog, QHBoxLayout,
                                QLabel, QMainWindow, QPushButton, QSizePolicy,
                                QVBoxLayout, QWidget, QFrame, QMessageBox)
 
 from converter import ConverterThread, CODEC_PRESETS
 from ffmpeg_manager import ffmpeg_path, ffprobe_path, is_ffmpeg_available, download_ffmpeg
-from ui.skin_widgets import (
-    RetroConsoleFrame, PhosphorLCDScreen, SegmentedLedMeter, SkeuomorphicButton,
-    RetroInsetPanel, CompactMediaTray, CLR_LIME_BRIGHT, CLR_LIME_MID, CLR_TEXT_MUTED
+from ui.wmp_skin import (
+    WmpSkinFrame, WmpTitleBar, WmpLcdDisplay, WmpProgressBar, WmpTransportButton,
+    WmpPanel, WmpMediaTray, CLR_WMP_GREEN_LIME, CLR_WMP_GREEN_MID, CLR_WMP_MUTED
 )
 
 
-# ── Stylesheet for Dropdowns, Dialogs, and Combos ─────────────────────────────
+# ── Stylesheet for Dropdowns and Dialogs ──────────────────────────────────────
 STYLESHEET = """
 /* ── Global ─────────────────────────── */
 QWidget {
-    font-family: 'Segoe UI', Tahoma, Verdana, sans-serif;
-    font-size: 12px;
+    font-family: 'Tahoma', 'Segoe UI', Verdana, sans-serif;
+    font-size: 11px;
     color: #CBE8D2;
 }
 
 QComboBox {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 #142A1A, stop:0.3 #0E2014, stop:0.8 #06140A, stop:1 #030A05);
+        stop:0 #163220, stop:0.25 #0E2214, stop:0.75 #06140A, stop:1 #020703);
     border: 1px solid #1E3F28;
-    border-radius: 4px;
+    border-radius: 3px;
     color: #00FF66;
-    padding: 5px 12px;
+    padding: 4px 10px;
     font-family: 'Lucida Console', 'Consolas', monospace;
     font-size: 11px;
     font-weight: bold;
-    min-width: 200px;
+    min-width: 190px;
 }
 QComboBox:hover {
     border-color: #00FF66;
@@ -50,7 +51,7 @@ QComboBox:hover {
 }
 QComboBox::drop-down {
     border: none;
-    padding-right: 8px;
+    padding-right: 6px;
 }
 QComboBox QAbstractItemView {
     background: #06140A;
@@ -67,61 +68,61 @@ QMessageBox {
 """
 
 
-# ── Main Application Window ───────────────────────────────────────────────────
+# ── Main Frameless Skinned Window Class ────────────────────────────────────────
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("PSP Video Converter // Digital Media Console")
+        self.setWindowTitle("PSP Video Converter // WMP-9 Series Skin")
         self.setFixedSize(860, 680)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
         self.setAcceptDrops(True)
 
         self._input_path = ""
         self._output_path = ""
         self._converter = None
+        self._drag_pos = None
 
         self._build_ui()
         self._check_ffmpeg_on_startup()
 
     def _build_ui(self):
-        # 1. Main Console Chassis
-        self.console = RetroConsoleFrame()
-        self.setCentralWidget(self.console)
+        # 1. Main WMP9 Skinned Frame Container
+        self.skinFrame = WmpSkinFrame()
+        self.setCentralWidget(self.skinFrame)
 
-        main_layout = QVBoxLayout(self.console)
-        main_layout.setContentsMargins(20, 16, 20, 16)
-        main_layout.setSpacing(10)
+        main_layout = QVBoxLayout(self.skinFrame)
+        main_layout.setContentsMargins(6, 6, 6, 12)
+        main_layout.setSpacing(8)
 
-        # ── Header Console Identity ───────────────────────────────────────────
-        header = QHBoxLayout()
-        header.setSpacing(10)
+        # ── 1. Custom WMP9 Title Bar ──────────────────────────────────────────
+        self.titleBar = WmpTitleBar("PSP VIDEO CONVERTER // 9 SERIES DIGITAL ENGINE", parent=self)
+        self.titleBar.minimize_clicked.connect(self.showMinimized)
+        self.titleBar.close_clicked.connect(self.close)
+        main_layout.addWidget(self.titleBar)
 
-        title_col = QVBoxLayout()
-        title_col.setSpacing(1)
+        # Content layout inside the skinned frame
+        content_layout = QVBoxLayout()
+        content_layout.setContentsMargins(14, 2, 14, 2)
+        content_layout.setSpacing(8)
 
-        app_title = QLabel("PSP TRANSCODER  //  DIGITAL MEDIA CONSOLE")
-        app_title.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
-        app_title.setStyleSheet("color: #00FF66; letter-spacing: 1.5px;")
+        # ── 2. Top Hardware Sub-Header with LED Status ────────────────────────
+        sub_header = QHBoxLayout()
+        sub_header.setSpacing(10)
 
-        app_sub = QLabel("MPEG-4 AVC / AAC-LC ENCODE ENGINE · PSP-3000 HARDWARE NATIVE")
-        app_sub.setFont(QFont("Lucida Console", 8, QFont.Weight.Bold))
-        app_sub.setStyleSheet("color: #4A7A58; letter-spacing: 0.5px;")
+        sub_title = QLabel("WINDOWS MEDIA PLAYER 9 // SONY PSP-3000 AVC TRANSCODER")
+        sub_title.setFont(QFont("Tahoma", 8, QFont.Weight.Bold))
+        sub_title.setStyleSheet("color: #4A7A58; letter-spacing: 0.5px;")
+        sub_header.addWidget(sub_title)
+        sub_header.addStretch()
 
-        title_col.addWidget(app_title)
-        title_col.addWidget(app_sub)
-        header.addLayout(title_col)
-        header.addStretch()
-
-        # Hardware Status LED Matrix
-        led_row = QHBoxLayout()
-        led_row.setSpacing(12)
-
-        def make_hardware_led(label_text: str, is_on: bool = True):
+        def make_wmp_led(label_text: str):
             w = QWidget()
             l = QHBoxLayout(w)
-            l.setContentsMargins(4, 2, 4, 2)
-            l.setSpacing(5)
+            l.setContentsMargins(2, 0, 2, 0)
+            l.setSpacing(4)
             led = QLabel("●")
-            led.setStyleSheet(f"color: {'#00FF66' if is_on else '#004D1F'}; font-size: 11px;")
+            led.setStyleSheet("color: #00FF66; font-size: 10px;")
             txt = QLabel(label_text)
             txt.setFont(QFont("Lucida Console", 8, QFont.Weight.Bold))
             txt.setStyleSheet("color: #6A9E78;")
@@ -129,48 +130,47 @@ class MainWindow(QMainWindow):
             l.addWidget(txt)
             return w
 
-        led_row.addWidget(make_hardware_led("CORE: ONLINE"))
-        led_row.addWidget(make_hardware_led("DSP: READY"))
-        led_row.addWidget(make_hardware_led("480x272"))
+        sub_header.addWidget(make_wmp_led("CORE: ONLINE"))
+        sub_header.addWidget(make_wmp_led("DSP: READY"))
+        sub_header.addWidget(make_wmp_led("480×272 NATIVE"))
 
-        header.addLayout(led_row)
-        main_layout.addLayout(header)
+        content_layout.addLayout(sub_header)
 
-        # ── Central Phosphor LCD Screen ───────────────────────────────────────
-        self.lcd = PhosphorLCDScreen()
+        # ── 3. Central Phosphor LCD Screen ────────────────────────────────────
+        self.lcd = WmpLcdDisplay()
         self.lcd.set_idle()
-        main_layout.addWidget(self.lcd)
+        content_layout.addWidget(self.lcd)
 
-        # ── Compact Media Tray / Drop Zone ────────────────────────────────────
-        self.dropTray = CompactMediaTray()
+        # ── 4. Compact Media Loading Tray (Drop Zone) ─────────────────────────
+        self.dropTray = WmpMediaTray()
         self.dropTray.file_dropped.connect(self._on_file_selected)
-        main_layout.addWidget(self.dropTray)
+        content_layout.addWidget(self.dropTray)
 
-        # ── Segmented LED Progress Meter ──────────────────────────────────────
-        self.meterRow = QHBoxLayout()
-        self.meterRow.setSpacing(10)
+        # ── 5. Segmented LED Seek / Progress Bar ──────────────────────────────
+        self.progressRow = QHBoxLayout()
+        self.progressRow.setSpacing(10)
 
-        self.progressBar = SegmentedLedMeter()
-        self.meterRow.addWidget(self.progressBar)
+        self.progressBar = WmpProgressBar()
+        self.progressRow.addWidget(self.progressBar)
 
         self.progressPctLabel = QLabel("00%")
-        self.progressPctLabel.setFont(QFont("Lucida Console", 10, QFont.Weight.Bold))
-        self.progressPctLabel.setStyleSheet("color: #00FF66; min-width: 44px;")
-        self.meterRow.addWidget(self.progressPctLabel)
+        self.progressPctLabel.setFont(QFont("Lucida Console", 9, QFont.Weight.Bold))
+        self.progressPctLabel.setStyleSheet("color: #00FF66; min-width: 38px;")
+        self.progressRow.addWidget(self.progressPctLabel)
 
-        main_layout.addLayout(self.meterRow)
+        content_layout.addLayout(self.progressRow)
 
-        # ── Hardware Parameters & Destination Panel ───────────────────────────
-        self.paramsPanel = RetroInsetPanel("TRANSCODE HARDWARE PARAMETERS")
+        # ── 6. Hardware Parameters & Destination Panel ────────────────────────
+        self.paramsPanel = WmpPanel("HARDWARE CONVERSION PARAMETERS")
         params_layout = QHBoxLayout(self.paramsPanel)
-        params_layout.setContentsMargins(10, 8, 10, 8)
-        params_layout.setSpacing(14)
+        params_layout.setContentsMargins(8, 6, 8, 6)
+        params_layout.setSpacing(12)
 
         # Profile Selector
         preset_box = QHBoxLayout()
         preset_box.setSpacing(6)
         preset_lbl = QLabel("PROFILE:")
-        preset_lbl.setFont(QFont("Lucida Console", 8, QFont.Weight.Bold))
+        preset_lbl.setFont(QFont("Tahoma", 8, QFont.Weight.Bold))
         preset_lbl.setStyleSheet("color: #4A7A58;")
 
         self.codecSelector = QComboBox()
@@ -180,19 +180,19 @@ class MainWindow(QMainWindow):
         preset_box.addWidget(self.codecSelector)
         params_layout.addLayout(preset_box)
 
-        # Output Destination
+        # Output Directory
         out_box = QHBoxLayout()
         out_box.setSpacing(6)
         out_lbl = QLabel("DESTINATION:")
-        out_lbl.setFont(QFont("Lucida Console", 8, QFont.Weight.Bold))
+        out_lbl.setFont(QFont("Tahoma", 8, QFont.Weight.Bold))
         out_lbl.setStyleSheet("color: #4A7A58;")
 
         self.outputPathLabel = QLabel("SAME AS SOURCE")
         self.outputPathLabel.setFont(QFont("Lucida Console", 8))
-        self.outputPathLabel.setStyleSheet("color: #00FF66; background: #040C06; padding: 4px 8px; border: 1px inset #142A1A; border-radius: 3px;")
+        self.outputPathLabel.setStyleSheet("color: #00FF66; background: #030804; padding: 4px 8px; border: 1px inset #102414; border-radius: 2px;")
         self.outputPathLabel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
-        self.changeOutputBtn = SkeuomorphicButton("CHANGE...")
+        self.changeOutputBtn = WmpTransportButton("CHANGE...")
         self.changeOutputBtn.clicked.connect(self._choose_output_folder)
 
         out_box.addWidget(out_lbl)
@@ -200,61 +200,77 @@ class MainWindow(QMainWindow):
         out_box.addWidget(self.changeOutputBtn)
         params_layout.addLayout(out_box)
 
-        main_layout.addWidget(self.paramsPanel)
+        content_layout.addWidget(self.paramsPanel)
 
-        # ── Primary Control Buttons / Action Bar ──────────────────────────────
-        actionBar = QHBoxLayout()
-        actionBar.setSpacing(10)
+        # ── 7. Bottom WMP9 Transport Controls / Action Bar ────────────────────
+        transportBar = QHBoxLayout()
+        transportBar.setSpacing(8)
 
-        # Browse / Select Media
-        self.browseBtn = SkeuomorphicButton("⏏  SELECT VIDEO FILE")
-        self.browseBtn.setFixedWidth(180)
+        # Open File Button
+        self.browseBtn = WmpTransportButton("⏏  OPEN FILE")
+        self.browseBtn.setFixedWidth(160)
         self.browseBtn.clicked.connect(self._browse_file)
-        actionBar.addWidget(self.browseBtn)
+        transportBar.addWidget(self.browseBtn)
 
         # Open Output Folder Button
-        self.openFolderBtn = SkeuomorphicButton("📁  OPEN OUTPUT FOLDER")
-        self.openFolderBtn.setFixedWidth(190)
+        self.openFolderBtn = WmpTransportButton("📁  OPEN FOLDER")
+        self.openFolderBtn.setFixedWidth(160)
         self.openFolderBtn.clicked.connect(self._open_output_folder)
         self.openFolderBtn.hide()
-        actionBar.addWidget(self.openFolderBtn)
+        transportBar.addWidget(self.openFolderBtn)
 
-        # Cancel Button
-        self.cancelBtn = SkeuomorphicButton("⏹  STOP / CANCEL")
-        self.cancelBtn.setFixedWidth(140)
+        # Cancel / Stop Button
+        self.cancelBtn = WmpTransportButton("⏹  STOP")
+        self.cancelBtn.setFixedWidth(120)
         self.cancelBtn.clicked.connect(self._cancel_conversion)
         self.cancelBtn.hide()
-        actionBar.addWidget(self.cancelBtn)
+        transportBar.addWidget(self.cancelBtn)
 
-        actionBar.addStretch()
+        transportBar.addStretch()
 
         # Primary Hero Button: CONVERT TO PSP
-        self.convertBtn = SkeuomorphicButton("▶  CONVERT TO PSP", is_hero=True)
-        self.convertBtn.setFixedWidth(240)
+        self.convertBtn = WmpTransportButton("▶  CONVERT TO PSP", is_hero=True)
+        self.convertBtn.setFixedWidth(230)
         self.convertBtn.setEnabled(False)
         self.convertBtn.clicked.connect(self._start_conversion)
-        actionBar.addWidget(self.convertBtn)
+        transportBar.addWidget(self.convertBtn)
 
-        main_layout.addLayout(actionBar)
+        content_layout.addLayout(transportBar)
 
-        # ── Missing FFmpeg Panel ──────────────────────────────────────────────
-        self.ffmpegPanel = RetroInsetPanel("ENGINE INITIALIZATION")
+        # ── 8. Missing FFmpeg Download Panel ──────────────────────────────────
+        self.ffmpegPanel = WmpPanel("ENGINE INITIALIZATION")
         ffmpegLayout = QVBoxLayout(self.ffmpegPanel)
-        ffmpegLayout.setContentsMargins(10, 10, 10, 10)
+        ffmpegLayout.setContentsMargins(8, 8, 8, 8)
         ffmpegLayout.setSpacing(6)
 
         ffmpegWarn = QLabel("⚠️  Portable FFmpeg transcode engine not detected.")
-        ffmpegWarn.setFont(QFont("Lucida Console", 9, QFont.Weight.Bold))
-        ffmpegWarn.setStyleSheet("color: #FFB000;")
+        ffmpegWarn.setFont(QFont("Tahoma", 8, QFont.Weight.Bold))
+        ffmpegWarn.setStyleSheet("color: #FFB800;")
         ffmpegWarn.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.downloadFfmpegBtn = SkeuomorphicButton("⬇  DOWNLOAD PORTABLE ENCODE ENGINE (AUTOMATIC)", is_hero=True)
+        self.downloadFfmpegBtn = WmpTransportButton("⬇  DOWNLOAD PORTABLE ENCODE ENGINE", is_hero=True)
         self.downloadFfmpegBtn.clicked.connect(self._download_ffmpeg)
 
         ffmpegLayout.addWidget(ffmpegWarn)
         ffmpegLayout.addWidget(self.downloadFfmpegBtn)
         self.ffmpegPanel.hide()
-        main_layout.addWidget(self.ffmpegPanel)
+        content_layout.addWidget(self.ffmpegPanel)
+
+        main_layout.addLayout(content_layout)
+
+    # ── Window Drag Handling ───────────────────────────────────────────────────
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton and event.position().y() <= 36:
+            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if event.buttons() == Qt.MouseButton.LeftButton and self._drag_pos is not None:
+            self.move(event.globalPosition().toPoint() - self._drag_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        self._drag_pos = None
 
     # ── FFmpeg Detection & Download ────────────────────────────────────────────
     def _check_ffmpeg_on_startup(self):
@@ -327,7 +343,7 @@ class MainWindow(QMainWindow):
         file_name = Path(path).name
         video_info = "UNKNOWN CODEC"
         audio_info = "UNKNOWN AUDIO"
-        dur_info = "00:00"
+        dur_info = "00:00:00"
         size_info = f"{Path(path).stat().st_size / (1024*1024):.1f} MB"
 
         probe = ffprobe_path()
@@ -346,7 +362,7 @@ class MainWindow(QMainWindow):
                     w, h = v.get("width", 0), v.get("height", 0)
                     sar = v.get("sample_aspect_ratio", "")
                     sar_txt = f" [SAR {sar}]" if sar and sar != "1:1" else ""
-                    video_info = f"{v_codec} · {w}x{h}{sar_txt}"
+                    video_info = f"{v_codec} · {w}×{h}{sar_txt}"
 
                 if a:
                     a_codec = a.get("codec_name", "AAC").upper()
@@ -356,8 +372,10 @@ class MainWindow(QMainWindow):
 
                 dur = float(data.get("format", {}).get("duration", 0))
                 if dur > 0:
-                    mins, secs = int(dur // 60), int(dur % 60)
-                    dur_info = f"{mins:02d}:{secs:02d}"
+                    hrs = int(dur // 3600)
+                    mins = int((dur % 3600) // 60)
+                    secs = int(dur % 60)
+                    dur_info = f"{hrs:02d}:{mins:02d}:{secs:02d}"
             except Exception:
                 pass
 
